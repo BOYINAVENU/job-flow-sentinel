@@ -91,7 +91,7 @@ const JobFlowVisualization = () => {
                       <h4 className="text-sm font-medium text-center mb-1">{stage.name}</h4>
                       <p className="text-xs text-gray-600 text-center mb-2">ID: {stage.jobId}</p>
                       
-                      <Badge size="sm" className={getStatusColor(stage.status)}>
+                      <Badge className={getStatusColor(stage.status)}>
                         {stage.status}
                       </Badge>
                     </div>
