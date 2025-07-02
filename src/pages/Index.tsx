@@ -11,37 +11,30 @@ import LongRunningJobs from "@/components/LongRunningJobs";
 import MissingJobsAlert from "@/components/MissingJobsAlert";
 import JobFlowVisualization from "@/components/JobFlowVisualization";
 import { useQuery } from "@tanstack/react-query";
+import { apiService } from "@/services/api";
 
 const Index = () => {
   const [selectedApp, setSelectedApp] = useState("all");
   
-  // Simulated data - you'll replace this with actual API calls to your MySQL database
-  const mockJobData = {
-    applications: ["VBCDF", "CDCM", "ETL", "ADHOC_SUPPORT"],
-    totalJobs: 156,
-    runningJobs: 12,
-    failedJobs: 3,
-    successfulJobs: 141,
-    longRunningJobs: 5,
-    missingJobs: 2
-  };
-
-  const { data: jobStats, isLoading } = useQuery({
+  const { data: jobStats, isLoading, error } = useQuery({
     queryKey: ['jobStats'],
-    queryFn: async () => {
-      // This will be replaced with your actual database query
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      return mockJobData;
-    },
+    queryFn: () => apiService.getJobStats(),
     refetchInterval: 30000, // Refresh every 30 seconds
+    retry: 3,
+    retryDelay: 1000,
   });
 
   useEffect(() => {
-    // Welcome message
-    toast.success("Job Monitoring System Initialized", {
-      description: "Monitoring all applications for job status and performance"
-    });
-  }, []);
+    if (error) {
+      toast.error("Failed to load job data", {
+        description: "Please check your backend connection and try again"
+      });
+    } else if (jobStats) {
+      toast.success("Job Monitoring System Connected", {
+        description: "Successfully connected to MySQL database"
+      });
+    }
+  }, [error, jobStats]);
 
   if (isLoading) {
     return (
@@ -49,7 +42,22 @@ const Index = () => {
         <div className="text-center space-y-4">
           <Activity className="w-12 h-12 animate-spin text-blue-600 mx-auto" />
           <h2 className="text-2xl font-semibold text-gray-800">Loading Job Status...</h2>
-          <p className="text-gray-600">Connecting to MySQL RDS and fetching latest data</p>
+          <p className="text-gray-600">Connecting to AWS RDS MySQL and fetching latest data</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-red-50 to-red-100">
+        <div className="text-center space-y-4">
+          <XCircle className="w-12 h-12 text-red-600 mx-auto" />
+          <h2 className="text-2xl font-semibold text-gray-800">Connection Error</h2>
+          <p className="text-gray-600">Unable to connect to the backend API</p>
+          <Button onClick={() => window.location.reload()}>
+            Retry Connection
+          </Button>
         </div>
       </div>
     );
@@ -66,7 +74,7 @@ const Index = () => {
                 <Database className="w-8 h-8 text-blue-600" />
                 ETL Job Monitor
               </h1>
-              <p className="text-gray-600 mt-2">Real-time monitoring across all applications</p>
+              <p className="text-gray-600 mt-2">Real-time monitoring via AWS RDS MySQL</p>
             </div>
             <div className="flex items-center gap-4">
               <Badge variant="outline" className="flex items-center gap-2">

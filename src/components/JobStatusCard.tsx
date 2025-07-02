@@ -4,17 +4,17 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { RefreshCw, ExternalLink } from "lucide-react";
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { apiService } from "@/services/api";
 
 const JobStatusCard = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const recentJobs = [
-    { id: "7615132203", name: "VBCDF Data Load", status: "SUCCESS", runtime: "42min", app: "VBCDF" },
-    { id: "7615132210", name: "CDCM Processing", status: "RUNNING", runtime: "18min", app: "CDCM" },
-    { id: "7615134444", name: "ETL Transform", status: "SUCCESS", runtime: "1h 24min", app: "ETL" },
-    { id: "761513677", name: "Data Validation", status: "FAILED", runtime: "5min", app: "VBCDF" },
-    { id: "7615131059", name: "Report Generation", status: "SUCCESS", runtime: "33min", app: "ADHOC_SUPPORT" },
-  ];
+  const { data: recentJobs, refetch } = useQuery({
+    queryKey: ['recentJobs'],
+    queryFn: () => apiService.getRecentJobs(),
+    refetchInterval: 15000, // Refresh every 15 seconds
+  });
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -27,9 +27,13 @@ const JobStatusCard = () => {
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    setIsRefreshing(false);
+    try {
+      await refetch();
+    } catch (error) {
+      console.error('Failed to refresh jobs:', error);
+    } finally {
+      setIsRefreshing(false);
+    }
   };
 
   return (
@@ -37,7 +41,7 @@ const JobStatusCard = () => {
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
         <div>
           <CardTitle>Recent Job Status</CardTitle>
-          <CardDescription>Latest job executions across all applications</CardDescription>
+          <CardDescription>Latest job executions from MySQL database</CardDescription>
         </div>
         <Button 
           variant="outline" 
@@ -52,7 +56,7 @@ const JobStatusCard = () => {
       </CardHeader>
       <CardContent>
         <div className="space-y-4">
-          {recentJobs.map((job) => (
+          {recentJobs?.map((job) => (
             <div key={job.id} className="flex items-center justify-between p-3 border rounded-lg hover:bg-gray-50 transition-colors">
               <div className="flex-1">
                 <div className="flex items-center gap-3 mb-1">
@@ -73,7 +77,11 @@ const JobStatusCard = () => {
                 </Button>
               </div>
             </div>
-          ))}
+          )) || (
+            <div className="text-center py-4 text-gray-500">
+              Loading job data...
+            </div>
+          )}
         </div>
       </CardContent>
     </Card>
