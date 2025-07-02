@@ -1,4 +1,3 @@
-
 const API_BASE_URL = 'http://localhost:8000/api'; // Update this to your Python backend URL
 
 interface JobStatus {
@@ -14,6 +13,7 @@ interface JobStatus {
   status?: 'SUCCESS' | 'RUNNING' | 'FAILED' | 'BLOCKED' | 'PENDING';
   startTime?: string;
   endTime?: string;
+  id?: string; // Added id property
 }
 
 interface JobStats {
@@ -93,7 +93,7 @@ class ApiService {
       job_end_tm_utc: job.job_end_tm_utc,
       aplctn_cd: job.aplctn_cd,
       // Mapped fields for compatibility
-      id: job.job_id,
+      id: job.job_id, // Map job_id to id for compatibility
       name: job.job_name || `Job ${job.job_id}`,
       app: job.aplctn_cd,
       status: this.mapStatus(job.job_stts),
