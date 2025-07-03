@@ -1,58 +1,97 @@
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle, Clock, XCircle, ArrowRight, Database } from "lucide-react";
+import { CheckCircle, Clock, XCircle, ArrowRight, Database, AlertTriangle } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { apiService } from "@/services/api";
 
 const JobFlowVisualization = () => {
-  const jobFlows = [
-    {
-      app: "VBCDF",
-      stages: [
-        { name: "Data Extraction", status: "SUCCESS", jobId: "7615132203" },
-        { name: "Data Validation", status: "SUCCESS", jobId: "7615132210" },
-        { name: "Data Transform", status: "RUNNING", jobId: "7615134444" },
-        { name: "Data Load", status: "PENDING", jobId: "761513677" }
-      ]
-    },
-    {
-      app: "CDCM",
-      stages: [
-        { name: "Source Sync", status: "SUCCESS", jobId: "141513976" },
-        { name: "Processing", status: "SUCCESS", jobId: "141513804" },
-        { name: "Quality Check", status: "FAILED", jobId: "141513588" },
-        { name: "Final Load", status: "BLOCKED", jobId: "141513578" }
-      ]
-    },
-    {
-      app: "ETL",
-      stages: [
-        { name: "Initialize", status: "SUCCESS", jobId: "7615131059" },
-        { name: "Extract", status: "SUCCESS", jobId: "7615131988" },
-        { name: "Transform", status: "RUNNING", jobId: "7615132157" },
-        { name: "Load", status: "PENDING", jobId: "7615132225" }
-      ]
-    }
-  ];
+  const { data: jobFlows, isLoading, error } = useQuery({
+    queryKey: ['jobFlows'],
+    queryFn: () => apiService.getJobFlows(),
+    refetchInterval: 30000,
+  });
 
   const getStatusIcon = (status: string) => {
-    switch (status) {
-      case "SUCCESS": return <CheckCircle className="w-4 h-4 text-green-500" />;
-      case "RUNNING": return <Clock className="w-4 h-4 text-blue-500 animate-spin" />;
-      case "FAILED": return <XCircle className="w-4 h-4 text-red-500" />;
-      case "BLOCKED": return <XCircle className="w-4 h-4 text-orange-500" />;
-      default: return <Clock className="w-4 h-4 text-gray-400" />;
+    switch (status?.toUpperCase()) {
+      case "SUCCESS": 
+      case "COMPLETED": 
+        return <CheckCircle className="w-4 h-4 text-green-500" />;
+      case "RUNNING": 
+      case "ACTIVE": 
+        return <Clock className="w-4 h-4 text-blue-500 animate-spin" />;
+      case "FAILED": 
+      case "ERROR": 
+        return <XCircle className="w-4 h-4 text-red-500" />;
+      case "BLOCKED": 
+      case "SKIPPED": 
+        return <AlertTriangle className="w-4 h-4 text-orange-500" />;
+      case "WAITING": 
+      case "PENDING": 
+        return <Clock className="w-4 h-4 text-gray-400" />;
+      default: 
+        return <Clock className="w-4 h-4 text-gray-400" />;
     }
   };
 
   const getStatusColor = (status: string) => {
-    switch (status) {
-      case "SUCCESS": return "bg-green-100 text-green-800 border-green-200";
-      case "RUNNING": return "bg-blue-100 text-blue-800 border-blue-200";
-      case "FAILED": return "bg-red-100 text-red-800 border-red-200";
-      case "BLOCKED": return "bg-orange-100 text-orange-800 border-orange-200";
-      default: return "bg-gray-100 text-gray-800 border-gray-200";
+    switch (status?.toUpperCase()) {
+      case "SUCCESS": 
+      case "COMPLETED": 
+        return "bg-green-100 text-green-800 border-green-200";
+      case "RUNNING": 
+      case "ACTIVE": 
+        return "bg-blue-100 text-blue-800 border-blue-200";
+      case "FAILED": 
+      case "ERROR": 
+        return "bg-red-100 text-red-800 border-red-200";
+      case "BLOCKED": 
+      case "SKIPPED": 
+        return "bg-orange-100 text-orange-800 border-orange-200";
+      case "WAITING": 
+      case "PENDING": 
+        return "bg-gray-100 text-gray-800 border-gray-200";
+      default: 
+        return "bg-gray-100 text-gray-800 border-gray-200";
     }
   };
+
+  if (isLoading) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Database className="w-5 h-5 text-blue-600" />
+            Job Flow Visualization
+          </CardTitle>
+          <CardDescription>Loading job flows...</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="animate-pulse space-y-4">
+            <div className="h-4 bg-gray-200 rounded w-3/4"></div>
+            <div className="h-4 bg-gray-200 rounded w-1/2"></div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (error) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Database className="w-5 h-5 text-blue-600" />
+            Job Flow Visualization
+          </CardTitle>
+          <CardDescription>Error loading job flows</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <p className="text-red-600">Failed to load job flow data</p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card>
@@ -67,32 +106,32 @@ const JobFlowVisualization = () => {
       </CardHeader>
       <CardContent>
         <div className="space-y-8">
-          {jobFlows.map((flow) => (
-            <div key={flow.app} className="border rounded-lg p-6 bg-gradient-to-r from-gray-50 to-white">
+          {jobFlows?.map((flow) => (
+            <div key={flow.aplctn_cd} className="border rounded-lg p-6 bg-gradient-to-r from-gray-50 to-white">
               <div className="flex items-center gap-3 mb-6">
-                <h3 className="text-lg font-semibold text-gray-900">{flow.app}</h3>
+                <h3 className="text-lg font-semibold text-gray-900">{flow.aplctn_cd}</h3>
                 <Badge variant="outline">Application Flow</Badge>
               </div>
               
               <div className="flex items-center justify-between overflow-x-auto pb-4">
-                {flow.stages.map((stage, index) => (
-                  <div key={stage.jobId} className="flex items-center">
+                {flow.stages?.map((stage, index) => (
+                  <div key={stage.job_id} className="flex items-center">
                     <div className="flex flex-col items-center min-w-[140px] mx-2">
                       <div className={`w-12 h-12 rounded-full border-2 flex items-center justify-center mb-2 ${
-                        stage.status === 'SUCCESS' ? 'bg-green-100 border-green-300' :
-                        stage.status === 'RUNNING' ? 'bg-blue-100 border-blue-300' :
-                        stage.status === 'FAILED' ? 'bg-red-100 border-red-300' :
-                        stage.status === 'BLOCKED' ? 'bg-orange-100 border-orange-300' :
+                        stage.job_stts?.toUpperCase() === 'SUCCESS' || stage.job_stts?.toUpperCase() === 'COMPLETED' ? 'bg-green-100 border-green-300' :
+                        stage.job_stts?.toUpperCase() === 'RUNNING' || stage.job_stts?.toUpperCase() === 'ACTIVE' ? 'bg-blue-100 border-blue-300' :
+                        stage.job_stts?.toUpperCase() === 'FAILED' || stage.job_stts?.toUpperCase() === 'ERROR' ? 'bg-red-100 border-red-300' :
+                        stage.job_stts?.toUpperCase() === 'BLOCKED' || stage.job_stts?.toUpperCase() === 'SKIPPED' ? 'bg-orange-100 border-orange-300' :
                         'bg-gray-100 border-gray-300'
                       }`}>
-                        {getStatusIcon(stage.status)}
+                        {getStatusIcon(stage.job_stts)}
                       </div>
                       
                       <h4 className="text-sm font-medium text-center mb-1">{stage.name}</h4>
-                      <p className="text-xs text-gray-600 text-center mb-2">ID: {stage.jobId}</p>
+                      <p className="text-xs text-gray-600 text-center mb-2">ID: {stage.job_id}</p>
                       
-                      <Badge className={getStatusColor(stage.status)}>
-                        {stage.status}
+                      <Badge className={getStatusColor(stage.job_stts)}>
+                        {stage.job_stts?.toUpperCase() || 'PENDING'}
                       </Badge>
                     </div>
                     
@@ -108,19 +147,26 @@ const JobFlowVisualization = () => {
                   <span className="text-gray-700">Flow Progress:</span>
                   <div className="flex items-center gap-4">
                     <span className="text-green-600">
-                      ✓ {flow.stages.filter(s => s.status === 'SUCCESS').length} Complete
+                      ✓ {flow.stages?.filter(s => s.job_stts?.toUpperCase() === 'SUCCESS' || s.job_stts?.toUpperCase() === 'COMPLETED').length || 0} Complete
                     </span>
                     <span className="text-blue-600">
-                      ⏳ {flow.stages.filter(s => s.status === 'RUNNING').length} Running
+                      ⏳ {flow.stages?.filter(s => s.job_stts?.toUpperCase() === 'RUNNING' || s.job_stts?.toUpperCase() === 'ACTIVE').length || 0} Running
                     </span>
                     <span className="text-red-600">
-                      ✗ {flow.stages.filter(s => s.status === 'FAILED' || s.status === 'BLOCKED').length} Issues
+                      ✗ {flow.stages?.filter(s => s.job_stts?.toUpperCase() === 'FAILED' || s.job_stts?.toUpperCase() === 'ERROR' || s.job_stts?.toUpperCase() === 'BLOCKED').length || 0} Issues
                     </span>
                   </div>
                 </div>
               </div>
             </div>
           ))}
+          
+          {(!jobFlows || jobFlows.length === 0) && (
+            <div className="text-center py-8">
+              <Database className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+              <p className="text-gray-600">No job flows available</p>
+            </div>
+          )}
         </div>
       </CardContent>
     </Card>

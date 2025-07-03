@@ -51,7 +51,12 @@ CREATE TABLE IF NOT EXISTS schedule_waiting (
     INDEX idx_condition_type (condition_type)
 );
 
--- Sample data for testing
+-- Clear existing sample data
+DELETE FROM schedule_processed;
+DELETE FROM schedule_waiting;
+DELETE FROM schedule_skipped;
+
+-- Sample data for VBCDF flow with correct job IDs
 INSERT INTO schedule_processed (job_id, job_stts, edl_load_dtm, job_strt_tm_utc, job_end_tm_utc, aplctn_cd) VALUES
 ('7615132203', 'SUCCESS', NOW(), DATE_SUB(NOW(), INTERVAL 2 HOUR), DATE_SUB(NOW(), INTERVAL 1 HOUR), 'VBCDF'),
 ('7615132210', 'SUCCESS', NOW(), DATE_SUB(NOW(), INTERVAL 1 HOUR), DATE_SUB(NOW(), INTERVAL 30 MINUTE), 'VBCDF'),
@@ -59,10 +64,12 @@ INSERT INTO schedule_processed (job_id, job_stts, edl_load_dtm, job_strt_tm_utc,
 ('141513976', 'SUCCESS', NOW(), DATE_SUB(NOW(), INTERVAL 3 HOUR), DATE_SUB(NOW(), INTERVAL 2 HOUR), 'CDCM'),
 ('7615131059', 'SUCCESS', NOW(), DATE_SUB(NOW(), INTERVAL 4 HOUR), DATE_SUB(NOW(), INTERVAL 3 HOUR), 'ETL');
 
+-- Waiting jobs (VBCDF Data Load job is waiting)
 INSERT INTO schedule_waiting (job_id, aplctn_cd, condition_type, expected_time, last_run, frequency, priority) VALUES
 ('761513677', 'VBCDF', 'DEPENDENCY', '06:00 AM EST', DATE_SUB(NOW(), INTERVAL 1 DAY), 'Daily', 'High'),
 ('7615131145', 'VBCDF', 'TIME', 'Every hour', DATE_SUB(NOW(), INTERVAL 2 HOUR), 'Hourly', 'Medium');
 
+-- Skipped jobs
 INSERT INTO schedule_skipped (job_id, aplctn_cd, skip_reason, expected_time) VALUES
 ('7615132999', 'VBCDF', 'After 12 AM refresh', DATE_SUB(NOW(), INTERVAL 1 DAY)),
 ('141513888', 'CDCM', 'Manual skip', DATE_SUB(NOW(), INTERVAL 1 DAY));

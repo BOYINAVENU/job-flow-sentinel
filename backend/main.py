@@ -41,22 +41,6 @@ def get_db_connection():
         logger.error(f"Database connection error: {e}")
         raise HTTPException(status_code=500, detail="Database connection failed")
 
-def map_job_status(db_status: str) -> str:
-    """Map database status to frontend status"""
-    status_map = {
-        'COMPLETED': 'SUCCESS',
-        'SUCCESS': 'SUCCESS',
-        'RUNNING': 'RUNNING',
-        'ACTIVE': 'RUNNING',
-        'FAILED': 'FAILED',
-        'ERROR': 'FAILED',
-        'BLOCKED': 'BLOCKED',
-        'PENDING': 'PENDING',
-        'WAITING': 'PENDING',
-        'SKIPPED': 'BLOCKED'
-    }
-    return status_map.get(db_status.upper(), 'PENDING')
-
 @app.get("/")
 async def root():
     return {"message": "ETL Job Monitor API", "status": "running"}
@@ -241,38 +225,50 @@ async def get_missing_jobs():
 
 @app.get("/api/jobs/flows")
 async def get_job_flows():
-    """Get job flows for applications"""
+    """Get job flows for applications with real data from database"""
     connection = get_db_connection()
     cursor = connection.cursor(dictionary=True)
     
     try:
-        # Get VBCDF flow as example
-        vbcdf_jobs = [
-            {"name": "Data Extraction", "job_id": "7615132203", "job_stts": "SUCCESS"},
-            {"name": "Data Validation", "job_id": "7615132210", "job_stts": "SUCCESS"},
-            {"name": "Data Transform", "job_id": "7615134444", "job_stts": "RUNNING"},
-            {"name": "Data Load", "job_id": "761513677", "job_stts": "PENDING"}
+        # VBCDF flow with correct job IDs
+        vbcdf_flow_jobs = [
+            {"job_id": "7615134444", "name": "Retro Daily Attribution"},
+            {"job_id": "7615132203", "name": "Data Extraction"}, 
+            {"job_id": "7615132210", "name": "Data Validation"},
+            {"job_id": "761513677", "name": "Data Load"}
         ]
         
-        # Get actual status from database
-        for stage in vbcdf_jobs:
-            cursor.execute("""
-                SELECT job_stts FROM schedule_processed WHERE job_id = %s
-                UNION
-                SELECT 'WAITING' as job_stts FROM schedule_waiting WHERE job_id = %s
-                UNION
-                SELECT 'SKIPPED' as job_stts FROM schedule_skipped WHERE job_id = %s
-                LIMIT 1
-            """, (stage['job_id'], stage['job_id'], stage['job_id']))
+        # Get actual status from database for each job
+        for stage in vbcdf_flow_jobs:
+            job_id = stage['job_id']
             
-            result = cursor.fetchone()
-            if result:
-                stage['job_stts'] = result['job_stts']
+            # Check processed table first
+            cursor.execute("SELECT job_stts FROM schedule_processed WHERE job_id = %s ORDER BY edl_load_dtm DESC LIMIT 1", (job_id,))
+            processed_result = cursor.fetchone()
+            
+            if processed_result:
+                stage['job_stts'] = processed_result['job_stts']
+            else:
+                # Check waiting table
+                cursor.execute("SELECT 'WAITING' as job_stts FROM schedule_waiting WHERE job_id = %s LIMIT 1", (job_id,))
+                waiting_result = cursor.fetchone()
+                
+                if waiting_result:
+                    stage['job_stts'] = 'WAITING'
+                else:
+                    # Check skipped table
+                    cursor.execute("SELECT 'SKIPPED' as job_stts FROM schedule_skipped WHERE job_id = %s LIMIT 1", (job_id,))
+                    skipped_result = cursor.fetchone()
+                    
+                    if skipped_result:
+                        stage['job_stts'] = 'SKIPPED'
+                    else:
+                        stage['job_stts'] = 'PENDING'
         
         flows = [
             {
                 "aplctn_cd": "VBCDF",
-                "stages": vbcdf_jobs
+                "stages": vbcdf_flow_jobs
             }
         ]
         
