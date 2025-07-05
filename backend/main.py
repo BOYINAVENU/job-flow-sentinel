@@ -1,11 +1,11 @@
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import mysql.connector
 from mysql.connector import Error
-import os
+from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
-from typing import List, Dict, Any
+from enum import Enum
 import logging
 
 # Configure logging
@@ -23,13 +23,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+class JobStatus(str, Enum):
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+    IN_PROGRESS = "IN-PROGRESS"
+    ALL = "ALL"
+
 # Database configuration
 DB_CONFIG = {
-    'host': os.getenv('DB_HOST', 'localhost'),
-    'user': os.getenv('DB_USER', 'root'),
-    'password': os.getenv('DB_PASSWORD', ''),
-    'database': os.getenv('DB_NAME', 'job_monitor'),
-    'port': int(os.getenv('DB_PORT', '3306'))
+    'host': 'aedl-rds-ro.edlclusterprod.awsdns.internal.das',
+    'port': 3306,
+    'user': 'edl_rds_user',
+    'password': 'EDLTempUser123',
+    'database': 'audt_cntrl'
 }
 
 def get_db_connection():
@@ -45,45 +51,144 @@ def get_db_connection():
 async def root():
     return {"message": "ETL Job Monitor API", "status": "running"}
 
+@app.get("/api/jobs")
+async def get_jobs(
+    status: Optional[JobStatus] = Query(None, description="Filter by job status"),
+    days: int = Query(1, description="Number of days to look back"),
+    limit: int = Query(100, description="Number of records to return")
+):
+    """Get jobs with filtering options"""
+    connection = get_db_connection()
+    cursor = connection.cursor(dictionary=True)
+    
+    try:
+        status_condition = ""
+        if status and status != JobStatus.ALL:
+            status_condition = f"AND job_stts = '{status}'"
+        
+        query = f"""
+        SELECT 
+            job_id,
+            job_stts,
+            CONVERT_TZ(job_strt_tm_utc, 'UTC', 'US/Eastern') AS start_time,
+            CONVERT_TZ(job_end_tm_utc, 'UTC', 'US/Eastern') AS end_time,
+            TIMESTAMPDIFF(MINUTE, job_strt_tm_utc, job_end_tm_utc) as duration_minutes
+        FROM audt_cntrl.edl_job_audt
+        WHERE CAST(job_strt_tm_utc AS DATE) > CURRENT_DATE - {days}
+            AND aplctn_cd = 'VBCDF'
+            {status_condition}
+        ORDER BY job_strt_tm_utc DESC
+        LIMIT {limit}
+        """
+        
+        cursor.execute(query)
+        jobs = cursor.fetchall()
+        
+        # Process the results
+        processed_jobs = []
+        for job in jobs:
+            processed_job = {
+                "job_id": job["job_id"],
+                "status": job["job_stts"],
+                "start_time": job["start_time"].isoformat() if job["start_time"] else None,
+                "end_time": job["end_time"].isoformat() if job["end_time"] else None,
+                "duration_minutes": job["duration_minutes"],
+                "status_color": {
+                    "SUCCEEDED": "green",
+                    "FAILED": "red",
+                    "IN-PROGRESS": "blue"
+                }.get(job["job_stts"], "gray")
+            }
+            processed_jobs.append(processed_job)
+        
+        # Get status summary
+        status_summary = {}
+        for status_val in [JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.IN_PROGRESS]:
+            status_summary[status_val] = len([j for j in processed_jobs if j["status"] == status_val])
+        
+        return {
+            "total": len(processed_jobs),
+            "jobs": processed_jobs,
+            "status_summary": status_summary
+        }
+        
+    except Error as e:
+        logger.error(f"Error getting jobs: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get jobs")
+    finally:
+        cursor.close()
+        connection.close()
+
+@app.get("/api/job/{job_id}")
+async def get_job_by_id(job_id: int):
+    """Get single job by ID"""
+    connection = get_db_connection()
+    cursor = connection.cursor(dictionary=True)
+    
+    try:
+        query = """
+        SELECT 
+            job_id,
+            job_stts,
+            CONVERT_TZ(job_strt_tm_utc, 'UTC', 'US/Eastern') AS start_time,
+            CONVERT_TZ(job_end_tm_utc, 'UTC', 'US/Eastern') AS end_time,
+            TIMESTAMPDIFF(MINUTE, job_strt_tm_utc, job_end_tm_utc) as duration_minutes
+        FROM audt_cntrl.edl_job_audt
+        WHERE job_id = %s
+        """
+        
+        cursor.execute(query, (job_id,))
+        job = cursor.fetchone()
+        
+        if job:
+            return {
+                "job_id": job["job_id"],
+                "status": job["job_stts"],
+                "start_time": job["start_time"].isoformat() if job["start_time"] else None,
+                "end_time": job["end_time"].isoformat() if job["end_time"] else None,
+                "duration_minutes": job["duration_minutes"],
+                "status_color": {
+                    "SUCCEEDED": "green",
+                    "FAILED": "red",
+                    "IN-PROGRESS": "blue"
+                }.get(job["job_stts"], "gray")
+            }
+        
+        raise HTTPException(status_code=404, detail="Job not found")
+        
+    except Error as e:
+        logger.error(f"Error getting job by ID: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get job")
+    finally:
+        cursor.close()
+        connection.close()
+
 @app.get("/api/jobs/stats")
 async def get_job_stats():
-    """Get job statistics from all three tables"""
+    """Get job statistics"""
     connection = get_db_connection()
     cursor = connection.cursor(dictionary=True)
     
     try:
         # Get applications
-        cursor.execute("SELECT DISTINCT aplctn_cd FROM schedule_processed UNION SELECT DISTINCT aplctn_cd FROM schedule_waiting UNION SELECT DISTINCT aplctn_cd FROM schedule_skipped")
+        cursor.execute("SELECT DISTINCT aplctn_cd FROM audt_cntrl.edl_job_audt")
         applications = [row['aplctn_cd'] for row in cursor.fetchall()]
         
         # Get total jobs
-        cursor.execute("SELECT COUNT(*) as total FROM (SELECT job_id FROM schedule_processed UNION SELECT job_id FROM schedule_waiting UNION SELECT job_id FROM schedule_skipped) as all_jobs")
+        cursor.execute("SELECT COUNT(*) as total FROM audt_cntrl.edl_job_audt WHERE aplctn_cd = 'VBCDF'")
         total_jobs = cursor.fetchone()['total']
         
         # Get running jobs
-        cursor.execute("SELECT COUNT(*) as running FROM schedule_processed WHERE job_stts = 'RUNNING'")
+        cursor.execute("SELECT COUNT(*) as running FROM audt_cntrl.edl_job_audt WHERE job_stts = 'IN-PROGRESS' AND aplctn_cd = 'VBCDF'")
         running_jobs = cursor.fetchone()['running']
         
         # Get failed jobs
-        cursor.execute("SELECT COUNT(*) as failed FROM schedule_processed WHERE job_stts IN ('FAILED', 'ERROR')")
+        cursor.execute("SELECT COUNT(*) as failed FROM audt_cntrl.edl_job_audt WHERE job_stts = 'FAILED' AND aplctn_cd = 'VBCDF'")
         failed_jobs = cursor.fetchone()['failed']
         
         # Get successful jobs
-        cursor.execute("SELECT COUNT(*) as success FROM schedule_processed WHERE job_stts IN ('COMPLETED', 'SUCCESS')")
+        cursor.execute("SELECT COUNT(*) as success FROM audt_cntrl.edl_job_audt WHERE job_stts = 'SUCCEEDED' AND aplctn_cd = 'VBCDF'")
         successful_jobs = cursor.fetchone()['success']
-        
-        # Get long running jobs (assuming jobs running > 2 hours)
-        cursor.execute("""
-            SELECT COUNT(*) as long_running 
-            FROM schedule_processed 
-            WHERE job_stts = 'RUNNING' 
-            AND TIMESTAMPDIFF(HOUR, job_strt_tm_utc, NOW()) > 2
-        """)
-        long_running_jobs = cursor.fetchone()['long_running']
-        
-        # Get missing jobs (jobs in waiting state)
-        cursor.execute("SELECT COUNT(*) as missing FROM schedule_waiting")
-        missing_jobs = cursor.fetchone()['missing']
         
         return {
             "applications": applications,
@@ -91,8 +196,8 @@ async def get_job_stats():
             "runningJobs": running_jobs,
             "failedJobs": failed_jobs,
             "successfulJobs": successful_jobs,
-            "longRunningJobs": long_running_jobs,
-            "missingJobs": missing_jobs
+            "longRunningJobs": 0,  # Can be calculated if needed
+            "missingJobs": 0       # Can be calculated if needed
         }
         
     except Error as e:
@@ -102,136 +207,15 @@ async def get_job_stats():
         cursor.close()
         connection.close()
 
-@app.get("/api/jobs/recent")
-async def get_recent_jobs():
-    """Get recent jobs from processed table"""
-    connection = get_db_connection()
-    cursor = connection.cursor(dictionary=True)
-    
-    try:
-        cursor.execute("""
-            SELECT job_id, job_stts, edl_load_dtm, job_strt_tm_utc, job_end_tm_utc, aplctn_cd,
-                   TIMESTAMPDIFF(MINUTE, job_strt_tm_utc, COALESCE(job_end_tm_utc, NOW())) as runtime_minutes
-            FROM schedule_processed 
-            ORDER BY edl_load_dtm DESC 
-            LIMIT 10
-        """)
-        
-        jobs = cursor.fetchall()
-        
-        # Transform data for frontend
-        result = []
-        for job in jobs:
-            runtime = f"{job['runtime_minutes']}min" if job['runtime_minutes'] else 'N/A'
-            result.append({
-                "job_id": job['job_id'],
-                "job_stts": job['job_stts'],
-                "edl_load_dtm": job['edl_load_dtm'].isoformat() if job['edl_load_dtm'] else None,
-                "job_strt_tm_utc": job['job_strt_tm_utc'].isoformat() if job['job_strt_tm_utc'] else None,
-                "job_end_tm_utc": job['job_end_tm_utc'].isoformat() if job['job_end_tm_utc'] else None,
-                "aplctn_cd": job['aplctn_cd'],
-                "runtime": runtime,
-                "job_name": f"Job {job['job_id']}"
-            })
-        
-        return result
-        
-    except Error as e:
-        logger.error(f"Error getting recent jobs: {e}")
-        raise HTTPException(status_code=500, detail="Failed to get recent jobs")
-    finally:
-        cursor.close()
-        connection.close()
-
-@app.get("/api/jobs/long-running")
-async def get_long_running_jobs():
-    """Get long running jobs"""
-    connection = get_db_connection()
-    cursor = connection.cursor(dictionary=True)
-    
-    try:
-        cursor.execute("""
-            SELECT job_id, job_stts, job_strt_tm_utc, aplctn_cd,
-                   TIMESTAMPDIFF(MINUTE, job_strt_tm_utc, NOW()) as current_runtime_minutes
-            FROM schedule_processed 
-            WHERE job_stts = 'RUNNING' 
-            AND TIMESTAMPDIFF(HOUR, job_strt_tm_utc, NOW()) > 1
-            ORDER BY job_strt_tm_utc ASC
-        """)
-        
-        jobs = cursor.fetchall()
-        
-        result = []
-        for job in jobs:
-            current_runtime = f"{job['current_runtime_minutes']}min"
-            # Assuming average runtime is 90 minutes for calculation
-            avg_runtime = "90min"
-            percentage_over = f"{int((job['current_runtime_minutes'] / 90 - 1) * 100)}%" if job['current_runtime_minutes'] > 90 else "0%"
-            
-            result.append({
-                "job_id": job['job_id'],
-                "job_name": f"Job {job['job_id']}",
-                "aplctn_cd": job['aplctn_cd'],
-                "current_runtime": current_runtime,
-                "avg_runtime": avg_runtime,
-                "percentage_over": percentage_over,
-                "job_strt_tm_utc": job['job_strt_tm_utc'].isoformat() if job['job_strt_tm_utc'] else None
-            })
-        
-        return result
-        
-    except Error as e:
-        logger.error(f"Error getting long running jobs: {e}")
-        raise HTTPException(status_code=500, detail="Failed to get long running jobs")
-    finally:
-        cursor.close()
-        connection.close()
-
-@app.get("/api/jobs/missing")
-async def get_missing_jobs():
-    """Get missing/waiting jobs"""
-    connection = get_db_connection()
-    cursor = connection.cursor(dictionary=True)
-    
-    try:
-        cursor.execute("""
-            SELECT job_id, aplctn_cd, expected_time, last_run, frequency, priority
-            FROM schedule_waiting
-            ORDER BY priority DESC, expected_time ASC
-        """)
-        
-        jobs = cursor.fetchall()
-        
-        result = []
-        for job in jobs:
-            result.append({
-                "job_id": job['job_id'],
-                "job_name": f"Job {job['job_id']}",
-                "aplctn_cd": job['aplctn_cd'],
-                "expected_time": job['expected_time'] if job['expected_time'] else 'N/A',
-                "last_run": job['last_run'].isoformat() if job['last_run'] else 'N/A',
-                "frequency": job['frequency'] if job['frequency'] else 'Unknown',
-                "priority": job['priority'] if job['priority'] else 'Medium'
-            })
-        
-        return result
-        
-    except Error as e:
-        logger.error(f"Error getting missing jobs: {e}")
-        raise HTTPException(status_code=500, detail="Failed to get missing jobs")
-    finally:
-        cursor.close()
-        connection.close()
-
 @app.get("/api/jobs/flows")
 async def get_job_flows():
-    """Get job flows for applications with real data from database"""
+    """Get job flows for VBCDF application"""
     connection = get_db_connection()
     cursor = connection.cursor(dictionary=True)
     
     try:
-        # VBCDF flow with correct job IDs
-        vbcdf_flow_jobs = [
+        # VBCDF flow jobs - get latest status for each job
+        vbcdf_jobs = [
             {"job_id": "7615134444", "name": "Retro Daily Attribution"},
             {"job_id": "7615132203", "name": "Data Extraction"}, 
             {"job_id": "7615132210", "name": "Data Validation"},
@@ -239,36 +223,27 @@ async def get_job_flows():
         ]
         
         # Get actual status from database for each job
-        for stage in vbcdf_flow_jobs:
+        for stage in vbcdf_jobs:
             job_id = stage['job_id']
             
-            # Check processed table first
-            cursor.execute("SELECT job_stts FROM schedule_processed WHERE job_id = %s ORDER BY edl_load_dtm DESC LIMIT 1", (job_id,))
-            processed_result = cursor.fetchone()
+            cursor.execute("""
+                SELECT job_stts 
+                FROM audt_cntrl.edl_job_audt 
+                WHERE job_id = %s 
+                ORDER BY job_strt_tm_utc DESC 
+                LIMIT 1
+            """, (job_id,))
             
-            if processed_result:
-                stage['job_stts'] = processed_result['job_stts']
+            result = cursor.fetchone()
+            if result:
+                stage['job_stts'] = result['job_stts']
             else:
-                # Check waiting table
-                cursor.execute("SELECT 'WAITING' as job_stts FROM schedule_waiting WHERE job_id = %s LIMIT 1", (job_id,))
-                waiting_result = cursor.fetchone()
-                
-                if waiting_result:
-                    stage['job_stts'] = 'WAITING'
-                else:
-                    # Check skipped table
-                    cursor.execute("SELECT 'SKIPPED' as job_stts FROM schedule_skipped WHERE job_id = %s LIMIT 1", (job_id,))
-                    skipped_result = cursor.fetchone()
-                    
-                    if skipped_result:
-                        stage['job_stts'] = 'SKIPPED'
-                    else:
-                        stage['job_stts'] = 'PENDING'
+                stage['job_stts'] = 'PENDING'
         
         flows = [
             {
                 "aplctn_cd": "VBCDF",
-                "stages": vbcdf_flow_jobs
+                "stages": vbcdf_jobs
             }
         ]
         
@@ -280,65 +255,6 @@ async def get_job_flows():
     finally:
         cursor.close()
         connection.close()
-
-@app.get("/api/jobs/by-app/{app}")
-async def get_jobs_by_application(app: str):
-    """Get jobs by application"""
-    connection = get_db_connection()
-    cursor = connection.cursor(dictionary=True)
-    
-    try:
-        cursor.execute("""
-            SELECT job_id, job_stts, edl_load_dtm, job_strt_tm_utc, job_end_tm_utc, aplctn_cd
-            FROM schedule_processed 
-            WHERE aplctn_cd = %s
-            ORDER BY edl_load_dtm DESC
-        """, (app,))
-        
-        jobs = cursor.fetchall()
-        
-        result = []
-        for job in jobs:
-            result.append({
-                "job_id": job['job_id'],
-                "job_stts": job['job_stts'],
-                "edl_load_dtm": job['edl_load_dtm'].isoformat() if job['edl_load_dtm'] else None,
-                "job_strt_tm_utc": job['job_strt_tm_utc'].isoformat() if job['job_strt_tm_utc'] else None,
-                "job_end_tm_utc": job['job_end_tm_utc'].isoformat() if job['job_end_tm_utc'] else None,
-                "aplctn_cd": job['aplctn_cd'],
-                "job_name": f"Job {job['job_id']}"
-            })
-        
-        return result
-        
-    except Error as e:
-        logger.error(f"Error getting jobs by application: {e}")
-        raise HTTPException(status_code=500, detail="Failed to get jobs by application")
-    finally:
-        cursor.close()
-        connection.close()
-
-@app.post("/api/jobs/{job_id}/trigger")
-async def trigger_job(job_id: str):
-    """Trigger a job (placeholder for actual job triggering logic)"""
-    logger.info(f"Triggering job: {job_id}")
-    
-    # Here you would implement actual job triggering logic
-    # For now, just return success
-    return {
-        "success": True,
-        "message": f"Job {job_id} trigger request sent"
-    }
-
-@app.post("/api/jobs/{job_id}/alert")
-async def send_alert(job_id: str, alert_data: dict):
-    """Send alert for a job"""
-    logger.info(f"Sending alert for job: {job_id}, message: {alert_data.get('message', '')}")
-    
-    # Here you would implement actual alerting logic (email, SMS, etc.)
-    return {
-        "success": True
-    }
 
 if __name__ == "__main__":
     import uvicorn
